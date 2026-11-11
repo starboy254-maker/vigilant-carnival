@@ -1,0 +1,172 @@
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Scalping Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #0d1117; color: #e6edf3;
+            padding: 20px; max-width: 900px; margin: 0 auto;
+        }
+        h1 { font-size: 1.4rem; margin-bottom: 4px; }
+        .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 20px; }
+        .warning {
+            background: #1c1408; border: 1px solid #9e6a03;
+            border-radius: 8px; padding: 12px 16px;
+            font-size: 0.85rem; color: #d29922; margin-bottom: 20px;
+        }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+        .card {
+            background: #161b22; border: 1px solid #30363d;
+            border-radius: 10px; padding: 18px;
+        }
+        .card h2 { font-size: 1rem; margin-bottom: 12px; color: #8b949e; }
+        .price { font-size: 2rem; font-weight: 700; margin-bottom: 4px; }
+        .signal {
+            font-size: 1.1rem; font-weight: 700;
+            padding: 8px 12px; border-radius: 6px;
+            text-align: center; margin-top: 12px;
+        }
+        .buy { background: #1a3a1a; color: #3fb950; border: 1px solid #238636; }
+        .sell { background: #3a1a1a; color: #f85149; border: 1px solid #da3633; }
+        .neutral { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+        .meta { font-size: 0.75rem; color: #484f58; margin-top: 8px; }
+        .ma-line { font-size: 0.8rem; color: #58a6ff; margin-top: 6px; }
+    </style>
+</head>
+<body>
+
+<h1>Live Scalping Dashboard</h1>
+<p class="subtitle">Live prices with a simple MA crossover signal. Not the Purra/Composite indicator.</p>
+
+<div class="warning">
+    <strong>This is a homemade signal.</strong> It uses a 10/30 moving average crossover on recent prices collected in your browser. It is NOT the TradingView indicators you asked about. Do not trade real money based on this alone.
+</div>
+
+<div class="grid">
+    <div class="card" id="gold-card">
+        <h2>Gold (XAU/USD)</h2>
+        <div class="price" id="gold-price">Loading...</div>
+        <div class="ma-line" id="gold-ma">MAs: --</div>
+        <div class="signal neutral" id="gold-signal">Waiting for data...</div>
+        <div class="meta" id="gold-meta"></div>
+    </div>
+
+    <div class="card" id="eur-card">
+        <h2>EUR/USD</h2>
+        <div class="price" id="eur-price">Loading...</div>
+        <div class="ma-line" id="eur-ma">MAs: --</div>
+        <div class="signal neutral" id="eur-signal">Waiting for data...</div>
+        <div class="meta" id="eur-meta"></div>
+    </div>
+</div>
+
+<script>
+// --- State for each instrument ---
+const state = {
+    gold: { prices: [], fastPeriod: 10, slowPeriod: 30, lastSignal: 'neutral' },
+    eur:  { prices: [], fastPeriod: 10, slowPeriod: 30, lastSignal: 'neutral' }
+};
+
+// --- Helper: simple moving average ---
+function sma(arr, period) {
+    if (arr.length < period) return null;
+    const slice = arr.slice(-period);
+    return slice.reduce((a, b) => a + b, 0) / period;
+}
+
+// --- Helper: update UI for one card ---
+function updateCard(key, price, sourceLabel) {
+    const s = state[key];
+    s.prices.push(price);
+    // Keep last 200 prices to avoid memory growth
+    if (s.prices.length > 200) s.prices.shift();
+
+    const priceEl = document.getElementById(key + '-price');
+    const maEl = document.getElementById(key + '-ma');
+    const sigEl = document.getElementById(key + '-signal');
+    const metaEl = document.getElementById(key + '-meta');
+
+    priceEl.textContent = price.toFixed(2);
+
+    const fast = sma(s.prices, s.fastPeriod);
+    const slow = sma(s.prices, s.slowPeriod);
+
+    if (fast !== null && slow !== null) {
+        maEl.textContent = `Fast MA(${s.fastPeriod}): ${fast.toFixed(2)} | Slow MA(${s.slowPeriod}): ${slow.toFixed(2)}`;
+
+        let signal, cls;
+        // Basic crossover logic: compare current vs previous relationship
+        const prevFast = sma(s.prices.slice(0, -1), s.fastPeriod);
+        const prevSlow = sma(s.prices.slice(0, -1), s.slowPeriod);
+
+        if (prevFast !== null && prevSlow !== null) {
+            if (prevFast <= prevSlow && fast > slow) {
+                signal = 'BUY (MA Cross Up)'; cls = 'buy';
+            } else if (prevFast >= prevSlow && fast < slow) {
+                signal = 'SELL (MA Cross Down)'; cls = 'sell';
+            } else if (fast > slow) {
+                signal = 'Bullish (Fast > Slow)'; cls = 'buy';
+            } else if (fast < slow) {
+                signal = 'Bearish (Fast < Slow)'; cls = 'sell';
+            } else {
+                signal = 'Neutral'; cls = 'neutral';
+            }
+        } else {
+            signal = 'Collecting data...'; cls = 'neutral';
+        }
+
+        sigEl.textContent = signal;
+        sigEl.className = 'signal ' + cls;
+    } else {
+        maEl.textContent = `Collecting data (${s.prices.length}/${s.slowPeriod})...`;
+    }
+
+    metaEl.textContent = `Source: ${sourceLabel} | Points collected: ${s.prices.length}`;
+}
+
+// --- Fetch Gold price ---
+async function fetchGold() {
+    try {
+        const res = await fetch('https://api.gold-api.com/price/XAU');
+        if (!res.ok) throw new Error('Gold API error');
+        const data = await res.json();
+        updateCard('gold', data.price, 'gold-api.com');
+    } catch (e) {
+        document.getElementById('gold-signal').textContent = 'Fetch error: ' + e.message;
+        document.getElementById('gold-signal').className = 'signal neutral';
+    }
+}
+
+// --- Fetch EUR/USD price ---
+async function fetchEur() {
+    try {
+        const res = await fetch('https://biquote.io/api/EURUSD');
+        if (!res.ok) throw new Error('Biquote API error');
+        const data = await res.json();
+        // biquote uses 'mid' as the price
+        const price = data.mid;
+        if (price == null) throw new Error('No mid price');
+        updateCard('eur', price, 'biquote.io');
+    } catch (e) {
+        document.getElementById('eur-signal').textContent = 'Fetch error: ' + e.message;
+        document.getElementById('eur-signal').className = 'signal neutral';
+    }
+}
+
+// --- Start polling every 5 seconds ---
+fetchGold();
+fetchEur();
+setInterval(fetchGold, 5000);
+setInterval(fetchEur, 5000);
+</script>
+
+</body>
+</html>
